@@ -204,6 +204,8 @@ let keyDictionary = {
 let keys = [];
 let last_keys = "";
 let port = null;
+// promise chain to serialize writes to the serial port
+var _writeChain = Promise.resolve();
 class C64keymapper {
     constructor() {
         var _a;
@@ -223,14 +225,29 @@ function SerialWrite(msg) {
     return __awaiter(this, void 0, void 0, function* () {
         if (port == null || msg == null || msg.length == 0)
             return;
-        const writer = port.writable.getWriter();
-        const data = new Uint8Array(msg.length + 1);
-        for (let i = 0; i < msg.length; ++i)
-            data[i] = msg.charCodeAt(i);
-        data[msg.length] = '|'.charCodeAt(0);
-        yield writer.write(data);
-        writer.releaseLock();
-        console.log(msg);
+        // Chain writes so we never attempt to getWriter while the stream is locked
+        _writeChain = _writeChain.then(() => __awaiter(this, void 0, void 0, function* () {
+            try {
+                while (port.writable && port.writable.locked) {
+                    yield new Promise(r => setTimeout(r, 1));
+                }
+            }
+            catch (e) { }
+            const writer = port.writable.getWriter();
+            try {
+                const data = new Uint8Array(msg.length + 1);
+                for (let i = 0; i < msg.length; ++i)
+                    data[i] = msg.charCodeAt(i);
+                data[msg.length] = '|'.charCodeAt(0);
+                yield writer.write(data);
+                console.log(msg);
+            }
+            finally {
+                try { writer.releaseLock(); }
+                catch (e) { }
+            }
+        })).catch(err => { console.error('SerialWrite error', err); });
+        return _writeChain;
     });
 }
 function C64ReturnClicked(ev) {
